@@ -7,10 +7,6 @@ import time
 fn = "CarPark.mp4"
 fn_yaml = "CarPark.yml"
 fn_out = "CarPark.avi"
-cascade_src = 'CarPark.xml'
-
-# Initialize the car classifier
-car_cascade = cv2.CascadeClassifier(cascade_src)
 global_str = "Last change at: "
 change_pos = 0.00
 dict = {
@@ -87,6 +83,7 @@ kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 19))
 if parking_data:
     parking_status = [False] * len(parking_data)
     parking_buffer = [None] * len(parking_data)
+
 
 def print_parkIDs(park, coor_points, frame_rev):
     moments = cv2.moments(coor_points)
@@ -171,31 +168,25 @@ while cap.isOpened():
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         pedestrians, _ = hog.detectMultiScale(gray, winStride=(8, 8), padding=(8, 8), scale=1.05)
         for (x, y, w, h) in pedestrians:
-            cv2.rectangle(frame_out, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-    if dict['save_video']:
-        out.write(frame_out)
-
-    # Calculate the delay needed to match the frame rate
-    frame_delay = int(1000 / video_info['fps'])
-    elapsed_time = time.time() - start_time
-    delay = max(frame_delay - int(elapsed_time * 1000), 0)
-    
+            cv2.rectangle(frame_out, (x, y), (x + w, y + h), (0, 255, 255), 2)
     # Print free parking slots
     free_slots = [i for i, status in enumerate(parking_status) if status]
     free_slots_text = f"Free slots: {len(free_slots)}"
     cv2.putText(frame_out, free_slots_text, (5, frame_out.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
 
     # Show frame
-    cv2.imshow('Video', frame_out)
+    cv2.imshow('Parking Detection', frame_out)
 
-    # Wait for the appropriate amount of time
-    cv2.waitKey(delay)
+    # Save video if the option is enabled
+    if dict['save_video']:
+        out.write(frame_out)
 
-    # Remove this if you want the video to play without waiting for 'q' key press
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    # Handle key events
+    k = cv2.waitKey(1) & 0xFF
+    if k == ord('q'):
         break
 
+# Cleanup
 cap.release()
 if dict['save_video']:
     out.release()
