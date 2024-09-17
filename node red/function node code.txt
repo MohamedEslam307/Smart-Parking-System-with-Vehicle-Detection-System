@@ -1,0 +1,19 @@
+var payload = msg.payload; // Use as is if already an object
+
+
+// Extract the values from the incoming payload
+var emptyPlaces = payload.payload.emptyplaces; // Access nested payload
+var fullPlaces = payload.payload.fullplaces;
+
+// Create a human-readable message string for WhatsApp
+var message = `Garage Status: There are ${emptyPlaces} empty places and ${fullPlaces} full places.`;
+
+// Encode the message for use in a URL
+var encodedMessage = encodeURIComponent(message);
+
+// Construct the API request URL with the encoded message
+var phoneNumber = payload.phoneNumber; // Use the phone number from the payload
+var apiKey = payload.apiKey; // Use the API key from the payload
+msg.url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(phoneNumber)}&text=${encodedMessage}&apikey=${apiKey}`;
+
+return msg;
