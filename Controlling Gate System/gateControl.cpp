@@ -48,7 +48,7 @@ void loop() {
 
   // Clear the second row and print the distance on the LCD
   lcd.setCursor(0, 1);
-  lcd.print("                "); // Clear the second row
+  lcd.print("                 "); // Clear the second row
   lcd.setCursor(0, 1); // Reset cursor to the start of the second row
 
   if (distance > 0) {
