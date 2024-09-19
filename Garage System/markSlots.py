@@ -1,23 +1,35 @@
 
 # press escape to finish doing real time boxing.
 # Program marks the polygons in the figure when it gets 4 double clicks
+#from picamera import PiCamera
 import cv2
 import yaml
 import numpy as np
+import time 
+import subprocess
 
 refPt = []
 cropping = False
 data = []
 file_path = 'CarPark.yml'
-#img = cv2.imread('example_image.png')
 
-cap = cv2.VideoCapture('CarPark.mp4')
-ret, img = cap.read()
+command = ['libcamera-still','-o','test.jpg']
+result = subprocess.run(command,capture_output=True,text=True)
 
-def yaml_loader(file_path):
-    with open(file_path, "r") as file_descr:
-        data = yaml.load(file_descr)
-        return data
+img=cv2.imread('./test.jpg')
+cv2.imshow('Camera', img)
+k = cv2.waitKey(1)
+
+#Release the capture and writer objects
+#cam.release()
+#out.release()
+#cv1.destroyAllWindows()
+
+
+def yaml_loader(file_descr):
+    data = yaml.load(file_descr, Loader=yaml.FullLoader)  # Specify the loader here
+    return data
+
 
 
 def yaml_dump(file_path, data):
@@ -81,4 +93,5 @@ while True:
 # data list into yaml file
 if data != []:
     yaml_dump(file_path, data)
+
 cv2.destroyAllWindows() #important to prevent window from becoming inresponsive
