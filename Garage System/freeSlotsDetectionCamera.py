@@ -3,6 +3,8 @@ import numpy as np
 import cv2
 import time
 from picamera2 import Picamera2
+import serial
+import threading
 
 # Path references
 fn_yaml = "CarPark.yml"
@@ -29,12 +31,42 @@ config = picam2.create_preview_configuration(main={"size": (1280, 720)})
 picam2.configure(config)
 picam2.start()
 
+# Initialize serial connection
+ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)  # Adjust the port and baud rate
+# Global variable to track running status of the serial listener thread
+running = True
+
+def handle_message(message):
+    """Function to handle messages received from Arduino."""
+    print(f"Received message from Arduino: {message}")
+    
+    # Example: Check for specific message from Arduino
+    if message == "CHECK_PARKING":
+        parking_status = check_parking_availability()  # Function to check parking status
+        ser.write(str(parking_status).encode('utf-8'))
+        ser.write(b'\n')  # Send newline after the message
+
+def listen_to_serial():
+    """Thread function to listen to the serial port for incoming messages."""
+    while running:
+        if ser.in_waiting > 0:  # Check if there is data in the serial buffer
+            message = ser.readline().decode('utf-8').strip()  # Read the message
+            handle_message(message)  # Trigger the handler function
+        else:
+            continue  # No message received, continue listening
+
+# Start the serial listening thread
+serial_thread = threading.Thread(target=listen_to_serial)
+serial_thread.start()
+
+
 # Set up video writer if needed
 if dict['save_video']:
     fourcc = cv2.VideoWriter_fourcc('X', 'V', 'I', 'D')
     out = cv2.VideoWriter(fn_out, fourcc, 20, (1280, 720))
 
 # Initialize HOG descriptor for pedestrian detection
+    - 419
 if dict['pedestrian_detection']:
     hog = cv2.HOGDescriptor()
     hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
@@ -77,6 +109,15 @@ def print_parkIDs(park, coor_points, frame_rev):
     centroid = (int(moments['m10'] / moments['m00']) - 3, int(moments['m01'] / moments['m00']) + 3)
     cv2.putText(frame_rev, str(park['id']), centroid, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
+def check_parking_availability():
+    # Use your parking detection code here to update parking_status
+    # For example, if there's at least one free spot, return 0 (available), otherwise 1 (full)
+    free_slots = [i for i, status in enumerate(parking_status) if status]
+    if len(free_slots) > 0:
+        return 0  # Parking available
+    else:
+        return 1  # Parking full
+
 while True:
     # Capture frame-by-frame from the Pi Camera
     frame_initial = picam2.capture_array()
@@ -86,7 +127,7 @@ while True:
     frame_blur = cv2.GaussianBlur(frame.copy(), (5, 5), 3)
     frame_gray = cv2.cvtColor(frame_blur, cv2.COLOR_BGR2GRAY)
     frame_out = frame.copy()
-
+    
     # Motion detection
     if dict['motion_detection']:
         fgmask = fgbg.apply(frame_blur)
@@ -159,10 +200,140 @@ while True:
     k = cv2.waitKey(1) & 0xFF
     if k == ord('q'):
         break
+    if k == ord('c'):
+        cv2.imwrite("./capture.png",frame_out)
 
 # Cleanup
 picam2.stop()
 if dict['save_video']:
     out.release()
 cv2.destroyAllWindows()
+
+####################
+# node red code
+import paho.mqtt.client as mqtt
+import time
+import ssl
+import json
+import pandas as pd
+
+# Load the Excel sheet from the specified path
+excel_file = r'\home\raspi\car_details.xlsx'  # Path to your Excel file
+df = pd.read_excel(excel_file)  # Read the Excel file into a pandas DataFrame
+
+# Display the contents of the DataFrame for debugging
+print("Data in Excel:")
+print(df)
+
+# Ask the user for the car number to search
+car_number = input("Enter the car number: ").strip()  # Stripping any leading/trailing whitespace
+
+# Search for the car number in the DataFrame
+car_info = df[df['car number'].astype(str).str.strip() == car_number]
+
+# If the car number is found, extract the phone number and API key
+if not car_info.empty:
+    phone_number = str(car_info.iloc[0]['phonenumber']).strip("'")  # Remove the extra apostrophe
+    api_key = str(car_info.iloc[0]['api'])  # Ensure it's a string
+    print(f"Phone number: {phone_number}, API key: {api_key}")
+else:
+    print("Car number not found in the Excel sheet.")
+    exit(1)
+
+# MQTT broker information
+broker_URL = "broker.hivemq.com"
+broker_port = 8883
+
+# Create an MQTT client instance
+client = mqtt.Client(client_id="sensordata1")
+
+# Set TLS for secure connection
+client.tls_set(ca_certs=None, certfile=None, keyfile=None, cert_reqs=ssl.CERT_NONE, tls_version=ssl.PROTOCOL_TLSv1_2)
+
+# Set username and password for MQTT broker
+client.username_pw_set("sicteam", "Aa123456")
+
+# Callbacks for connect/disconnect
+def on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print("Connected successfully to broker")
+    else:
+        print(f"Failed to connect with result code {rc}")
+
+def on_disconnect(client, userdata, rc):
+    print(f"Disconnected with result code {rc}")
+
+client.on_connect = on_connect
+client.on_disconnect = on_disconnect
+
+# Connect to the broker
+try:
+    client.connect(broker_URL, broker_port)
+    client.loop_start()  # Start the loop
+    print("Connected to Broker!")
+except Exception as e:
+    print(f"Failed to connect to broker: {e}")
+    exit(1)
+
+# Class to hold the number of empty and full places, location, and fee rate
+class GarageStatus:
+    def __init__(self, emptyplaces, fullplaces, location, parking_fee_rate):
+        self.emptyplaces = int(emptyplaces)  # Ensure conversion to int
+        self.fullplaces = int(fullplaces)    # Ensure conversion to int
+        self.location = location
+        self.parking_fee_rate = parking_fee_rate  # Fee rate per car
+
+    # Method to calculate the total parking fee for all cars in the garage
+    def calculate_fee(self):
+        return self.fullplaces * self.parking_fee_rate
+
+    # Method to convert object to a dictionary for JSON serialization
+    def to_dict(self):
+        return {
+            "emptyplaces": self.emptyplaces,  # Already converted to int
+            "fullplaces": self.fullplaces,    # Already converted to int
+            "location": self.location,
+            "total_fee": self.calculate_fee(),  # Calculate the total fee
+            "parking_fee_rate": self.parking_fee_rate
+        }
+emptyplaces = free_slots
+# Creating 3 instances for 3 different garages, including location URLs and fee rates
+garage1 = GarageStatus(emptyplaces, fullplaces= 2- emptyplaces, location="https://maps.app.goo.gl/ADbYHBEvx9AT3J54A", parking_fee_rate=5)  # $5 per car
+garage2 = GarageStatus(emptyplaces=1, fullplaces=5, location="https://maps.app.goo.gl/2aAutYdkyRy2NjAF8", parking_fee_rate=5)  # $7 per car
+garage3 = GarageStatus(emptyplaces=4, fullplaces=2, location="https://maps.app.goo.gl/bibvj2RMA3KZg6DG8", parking_fee_rate=10) # $10 per car
+
+# Serialize the objects to JSON strings, including phone number and API key
+messages = {
+    "Garage1": json.dumps({
+        "phoneNumber": phone_number,
+        "apiKey": api_key,
+        "payload": garage1.to_dict()
+    }),
+    "Garage2": json.dumps({
+        "phoneNumber": phone_number,
+        "apiKey": api_key,
+        "payload": garage2.to_dict()
+    }),
+    "Garage3": json.dumps({
+        "phoneNumber": phone_number,
+        "apiKey": api_key,
+        "payload": garage3.to_dict()
+    })
+}
+
+# Publish messages for each garage with QoS 1 and retain the messages
+for topic in messages.keys():
+    try:
+        client.publish(topic, messages[topic], qos=1, retain=True)
+        print(f"Published: {messages[topic]} to topic: {topic}")
+    except Exception as e:
+        print(f"Failed to publish message to {topic}: {e}")
+
+# Wait for a bit before disconnecting
+time.sleep(2)
+
+# Stop the loop and disconnect from the broker
+client.loop_stop()
+client.disconnect()
+print("Disconnected from Broker.")
 

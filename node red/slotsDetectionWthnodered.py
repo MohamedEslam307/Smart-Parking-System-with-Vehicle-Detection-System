@@ -3,7 +3,8 @@ import numpy as np
 import cv2
 import time
 from picamera2 import Picamera2
-
+import serial
+import threading
 
 
 
@@ -77,6 +78,33 @@ class GarageStatus:
 
  ########################
 
+# Initialize serial connection
+ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)  # Adjust the port and baud rate
+# Global variable to track running status of the serial listener thread
+running = True
+
+def handle_message(message):
+    """Function to handle messages received from Arduino."""
+    print(f"Received message from Arduino: {message}")
+    
+    # Example: Check for specific message from Arduino
+    if message == "CHECK_PARKING":
+        parking_status = check_parking_availability()  # Function to check parking status
+        ser.write(str(parking_status).encode('utf-8'))
+        ser.write(b'\n')  # Send newline after the message
+
+def listen_to_serial():
+    """Thread function to listen to the serial port for incoming messages."""
+    while running:
+        if ser.in_waiting > 0:  # Check if there is data in the serial buffer
+            message = ser.readline().decode('utf-8').strip()  # Read the message
+            handle_message(message)  # Trigger the handler function
+        else:
+            continue  # No message received, continue listening
+
+# Start the serial listening thread
+serial_thread = threading.Thread(target=listen_to_serial)
+serial_thread.start()
 
 
 # Path references
@@ -103,6 +131,26 @@ picam2 = Picamera2()
 config = picam2.create_preview_configuration(main={"size": (1280, 720)})
 picam2.configure(config)
 picam2.start()
+
+
+# Initialize a dictionary to store entry times for each parking slot
+parking_entry_times = [None] * len(parking_data)
+
+def calculate_parking_fee(start_time, end_time):
+    duration = end_time - start_time
+    hours_parked = duration / 3600  # Convert seconds to hours
+    fee = hours_parked * 10  # 10 pounds per hour
+    return round(fee, 2)
+
+def check_parking_availability():
+    # Use your parking detection code here to update parking_status
+    # For example, if there's at least one free spot, return 0 (available), otherwise 1 (full)
+    free_slots = [i for i, status in enumerate(parking_status) if status]
+    if len(free_slots) > 0:
+        return 0  # Parking available
+    else:
+        return 1  # Parking full
+
 
 # Set up video writer if needed
 if dict['save_video']:
@@ -174,6 +222,29 @@ while True:
                 continue
             (x, y, w, h) = cv2.boundingRect(c)
             cv2.rectangle(frame_out, (x, y), (x + w, y + h), (255, 0, 0), 1)
+    if ser.in_waiting > 0:
+        incoming_msg = ser.readline().decode('utf-8').strip()  # Read the message
+        
+        # If the message is "CHECK_PARKING", send the parking status
+        if incoming_msg == "CHECK_PARKING":
+            parking_status = check_parking_availability()
+            ser.write(str(parking_status).encode('utf-8'))  # Send response to Arduino
+            ser.write(b'\n')  # End message with a newline
+##################################################################################################
+# Initialize a dictionary to store entry times for each parking slot
+parking_entry_times = [None] * len(parking_data)
+
+def calculate_parking_fee(start_time, end_time):
+    duration = end_time - start_time
+    hours_parked = duration / 3600  # Convert seconds to hours
+    fee = hours_parked * 10  # 10 pounds per hour
+    return round(fee, 2)
+
+while True:
+    # Capture frame-by-frame from the Pi Camera
+    frame_initial = picam2.capture_array()
+    frame = cv2.resize(frame_initial, (1280, 720))
+
 
     # Parking detection
     if dict['parking_detection']:
@@ -187,6 +258,23 @@ while True:
             points[:, 1] = points[:, 1] - rect[1]
             delta = np.mean(np.abs(laplacian * parking_mask[ind]))
             status = delta < dict['park_laplacian_th']
+
+            # Check for car entry (car occupied the slot)
+            if status and not parking_status[ind]:
+                parking_entry_times[ind] = time.time()  # Record entry time
+                print(f"Car entered slot {ind} at {time.ctime(parking_entry_times[ind])}")
+
+            # Check for car exit (car leaves the slot)
+            if not status and parking_status[ind]:
+                if parking_entry_times[ind] is not None:
+                    exit_time = time.time()  # Record exit time
+                    print(f"Car left slot {ind} at {time.ctime(exit_time)}")
+
+                    # Calculate the fee
+                    fee = calculate_parking_fee(parking_entry_times[ind], exit_time)
+                    print(f"Parking fee for slot {ind}: {fee} pounds")
+
+                    parking_entry_times[ind] = None  # Reset the entry time
 
             if status != parking_status[ind] and parking_buffer[ind] is None:
                 parking_buffer[ind] = time.time()
@@ -286,5 +374,4 @@ cv2.destroyAllWindows()
 client.loop_stop()
 client.disconnect()
 print("Disconnected from Broker.")
-
 
