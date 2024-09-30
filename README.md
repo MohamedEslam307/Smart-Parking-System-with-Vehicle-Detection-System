@@ -1,6 +1,6 @@
 # Smart Parking System with Vehicle Detection System
 
-This project implements a smart parking system that utilizes a Pi Camera for vehicle detection, OpenCV for image processing and motion detection, and MQTT for remote monitoring with Node-Red. It features real-time tracking of parking slots and calculates fees based on parking duration. Additionally, the system integrates with serial communication to check parking availability.
+This project implements a smart parking system that utilizes a Pi Camera for vehicle detection, OpenCV for image processing and motion detection, and MQTT for remote monitoring with Node-Red. It features real-time tracking of parking slots and calculates fees based on parking duration. Additionally, the system integrates with serial communication with gate subsystem to check parking availability.
 
 ## Table of Contents
 
